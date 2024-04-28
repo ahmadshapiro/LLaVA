@@ -163,7 +163,9 @@ class LLaVATrainer(Trainer):
             decay_parameters = get_parameter_names(opt_model, ALL_LAYERNORM_LAYERS)
             decay_parameters = [name for name in decay_parameters if "bias" not in name]
             if self.args.mm_projector_lr is not None:
-                projector_parameters = [name for name, _ in opt_model.named_parameters() if "mm_projector" in name] #TODO
+                is_projector = lambda x: any([i in x for i in ['vit_to_llm_projector', 'text_projection']])
+                
+                projector_parameters = [name for name, _ in opt_model.named_parameters() if is_projector(name)] #TODO
                 optimizer_grouped_parameters = [
                     {
                         "params": [
