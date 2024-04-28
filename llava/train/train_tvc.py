@@ -62,13 +62,17 @@ class ModelArguments:
     vision_tower_text_projector_type: Optional[str] = field(default='mlp2x_gelu') # Shapiro
     text_conditioned_vision_tower: bool = field(default=True)
     
-    mm_vision_select_layer: Optional[int] = field(default=-1)   # default to the last layer
     pretrain_mm_mlp_adapter: Optional[str] = field(default=None)
+    mm_vision_select_layer: Optional[int] = field(default=-1)
+    mm_vision_select_feature: Optional[str] = field(default="patch")
+    # default to the last layer
+    mm_patch_merge_type: Optional[str] = field(default='flat')
+
     mm_projector_type: Optional[str] = field(default='linear')
+
     mm_use_im_start_end: bool = field(default=False)
     mm_use_im_patch_token: bool = field(default=True)
-    mm_patch_merge_type: Optional[str] = field(default='flat')
-    mm_vision_select_feature: Optional[str] = field(default="patch")
+    
 
 
 @dataclass
@@ -755,6 +759,7 @@ class LazySupervisedDataset(Dataset):
             crop_size = self.data_args.image_processor.crop_size
             data_dict['image'] = torch.zeros(3, crop_size['height'], crop_size['width'])
         
+        #TODO
         data_dict['input_prompts'] = [self.vit_text_tokenizer.encode(i['value'].replace("<image>", "").strip()) for i in self.list_data_dict[i]['conversations'] if i['from'] == 'human' ][0]
         return data_dict
 
@@ -768,15 +773,18 @@ class DataCollatorForSupervisedDataset(object):
     def __call__(self, instances: Sequence[Dict]) -> Dict[str, torch.Tensor]:
         input_ids, labels = tuple([instance[key] for instance in instances]
                                   for key in ("input_ids", "labels"))
+        
         input_ids = torch.nn.utils.rnn.pad_sequence(
             input_ids,
             batch_first=True,
             padding_value=self.tokenizer.pad_token_id)
+        
         labels = torch.nn.utils.rnn.pad_sequence(labels,
                                                  batch_first=True,
                                                  padding_value=IGNORE_INDEX)
         input_ids = input_ids[:, :self.tokenizer.model_max_length]
         labels = labels[:, :self.tokenizer.model_max_length]
+        
         batch = dict(
             input_ids=input_ids,
             labels=labels,
@@ -797,9 +805,11 @@ class DataCollatorForSupervisedDataset(object):
 def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer,
                                 data_args) -> Dict:
     """Make dataset and collator for supervised fine-tuning."""
+    
     train_dataset = LazySupervisedDataset(  tokenizer=tokenizer,
                                             data_path=data_args.data_path,
                                             data_args=data_args)
+    
     data_collator = DataCollatorForSupervisedDataset(tokenizer=tokenizer)
     return dict(train_dataset=train_dataset,
                 eval_dataset=None,
@@ -862,7 +872,7 @@ def train(attn_implementation=None):
         use_fast=False,
     )
 
-    # 8. Editing the tokenizer to account forimage tokens
+    # 8. Editing the tokenizer to account for image tokens
     tokenizer.pad_token = tokenizer.unk_token
     if model_args.version in conversation_lib.conv_templates:
         conversation_lib.default_conversation = conversation_lib.conv_templates[model_args.version]
@@ -903,28 +913,18 @@ def train(attn_implementation=None):
         data_args.image_processor = vision_tower.image_processor
         data_args.is_multimodal = True
 
+        ##TODO Start Here Dude
         model.config.image_aspect_ratio = data_args.image_aspect_ratio
         model.config.tokenizer_padding_side = tokenizer.padding_side
         model.config.tokenizer_model_max_length = tokenizer.model_max_length
-
         model.config.tune_mm_mlp_adapter = training_args.tune_mm_mlp_adapter = model_args.tune_mm_mlp_adapter
-        if model_args.tune_mm_mlp_adapter:
-            model.requires_grad_(False)
-            for p in model.get_model().mm_projector.parameters():
-                p.requires_grad = True
-
-        model.config.freeze_mm_mlp_adapter = training_args.freeze_mm_mlp_adapter
-        if training_args.freeze_mm_mlp_adapter:
-            for p in model.get_model().mm_projector.parameters():
-                p.requires_grad = False
-
-        if training_args.bits in [4, 8]:
-            model.get_model().mm_projector.to(dtype=compute_dtype, device=training_args.device)
+        
 
         model.config.mm_use_im_start_end = data_args.mm_use_im_start_end = model_args.mm_use_im_start_end
         model.config.mm_projector_lr = training_args.mm_projector_lr
         training_args.use_im_start_end = model_args.mm_use_im_start_end
         model.config.mm_use_im_patch_token = model_args.mm_use_im_patch_token
+        
         model.initialize_vision_tokenizer(model_args, tokenizer=tokenizer) # Shapiro : Adds image tokens to the LLama Tokenizer
 
     # 11. Creating the dataset

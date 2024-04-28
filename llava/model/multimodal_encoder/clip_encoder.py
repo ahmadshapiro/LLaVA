@@ -88,7 +88,6 @@ class CLIPVisionTower(nn.Module):
         return (self.config.image_size // self.config.patch_size) ** 2
 
 
-
 class CLIPVisionTowerS2(CLIPVisionTower):
     def __init__(self, vision_tower, args, delay_load=False):
         super().__init__(vision_tower, args, delay_load)
